@@ -14,24 +14,24 @@ Today's topic will be the overall structure of the new Python converter and its 
 
 Every game or game edition we convert will go through 3 different stages: ***Reader***, ***Processor*** and ***Exporter***.
 
-In the *Reader*, we parse data or media files and put them into a structured format that we can use during conversion. The content read is passed onto the *Processor* where the actual conversion takes place. Here, the data are first organized into conversion objects that resemble the original games structure (Genie-like objects). These are transitioned into objects that model the openage API (API-like objects) and then put into actual nyan API objects that can be exported to file. An *Exporter* will take the converted objects and sort them into modpacks. The very last stage of the conversion is printing the objects to nyan files and other human-readable formats along with requested media files.
+In the *Reader*, we parse data or media files and put them into a structured format that we can use during conversion. The content read is passed into the *Processor* where the actual conversion takes place. Here, the data are first organized into conversion objects that resemble the original games structure (Genie-like objects). These are transitioned into objects that model the openage API (API-like objects) and then put into actual nyan API objects that can be exported to a file. The *Exporter* will take the converted objects and sort them into modpacks, while the very last stage of the conversion is printing the objects to nyan files and other human-readable formats along with requested media files.
 
-Every stage is modular which means it can easibly be exchanged or replaced. This comes in handy when we have to consider the multiple releases of AoE1 and AoE2. For example, the Definitive Edition of AoE1 will use an extended Processor stage compared to the original version of AoE1 due to the presence of new features and different mechanics. This means we can do a lot of code sharing and do not have to build a new converter for every edition of a game.
+Every stage is modular which means it can easily be exchanged or replaced. This comes in handy when we have to consider the multiple releases of AoE1 and AoE2. For example, the Definitive Edition of AoE1 will use an extended Processor stage compared to the original version of AoE1 due to the presence of new features and different mechanics. This means we can do a lot of code sharing and do not have to build a new converter for every edition of a game.
 
 Note that from this point onwards we will exclusively talk about data conversion, or more specifically, converting gamedata from the `empires*.dat` files. Media conversion is a separate topic that we will leave out for now and maybe handle in an additional blogpost in the future.
 
 ## Reading and Storing
 
-Our first goal in the conversion process is to access the data and load it into the converter in a usable format. Since AoE2's `.dat` file uses a binary format, we have to *serialize* the values before we can do anything with them. In this case, serialization means that we traverse the file byte by byte, extracting the values and storing them as Python structs. The format has been well documented over the years, so we know exactly at which offset what attribute can be found.
+Our first goal in the conversion process is to access the data and load it into the converter in a usable format. Since AoE2's `.dat` file uses a binary format, we have to *serialize* the values before we can do anything with them. In this case, serialization means that we traverse the file byte by byte, extract the values and store them as Python structs. The format has been well documented over the years, so we know exactly at which offset what attribute can be found.
 
-When we encounter an attribute value in the `.dat` file we have to worry about two things: How we **read** it and how we **store** it. The distinction between those two is a result of the different contraints values from the `.dat` file and values in our own database language `nyan` have. For example - depending on the attribute - integers in the `.dat` file can differ in:
+When we encounter an attribute value in the `.dat` file we have to worry about two things: How we **read** it and how we **store** it. The distinction between those two is a result of the different contraints values of the `.dat` file and values in our own database language `nyan` have. For example - depending on the attribute - integers in the `.dat` file can differ in:
 
 * **Length**: An integer may be stored with length 8 Bit (`int8`), 16 Bit (`int16`) or 32 Bit (`int32`).
 * **Signing**: Integers may have 1 prefix Bit to signal a negative value (`signed int`) or not (`unsigned int`).
 
 Therefore, we have to specify the correct read type for every attribute in the `.dat`. Otherwise we would get the wrong values.
 
-Additionally, even if two attributes have the same read type, we might want to use a different storage type depending the context the attribute is used in. For example, the converter used different storage types for attributes representing unit stats (e.g. HP, movement speed, damage vaues, ...) and resource IDs (e.g. sound or animation IDs). This becomes relevant when we want to compare two units later on to calculate upgrades or when we want to determine the differences between vanilla AoE2 and a user made data mod.
+Additionally, even if two attributes have the same read type, we might want to use different storage types depending on the context the attribute is used for. The converter uses different storage types for attributes representing unit stats (e.g. HP, movement speed, damage vaues, ...) and resource IDs (e.g. sound or animation IDs). This becomes relevant when we want to compare two units later for the calculation of upgrades or if we want to determine the differences between vanilla AoE2 and a user made data mod.
 
 ![Read type and Storage type]({static}/images/C0000-read-vs-value-member.svg)
 
@@ -57,11 +57,11 @@ dataformat.extend([
 ])
 ```
 
-For every attribute in the `.dat` file, the *Reader* module contains a 4-tuple that stores its read mode, attribute name, storage type and read type.
+For every attribute in the `.dat` file, the *Reader* module contains a 4-tuple that stores its' read mode, attribute name, storage type and read type.
 
 **Read Mode**
 
-This signifies whether we want to actually read the value (`READ`) or skip over it (`IGNORE`). The latter read mode is used for values that are irrelevant for the conversion. A lot of the time they are leftovers from old beta versions (e.g. `old_portrait_icon_id`).
+This specifies whether we want to actually read the value (`READ`) or skip it (`IGNORE`). The latter read mode is used for values that are irrelevant to the conversion. Often they are leftovers from old beta versions (e.g. `old_portrait_icon_id`).
 
 **Attribute Name**
 
@@ -77,13 +77,13 @@ The read type of an attribute. For primitive types such as integers, strings or 
 
 ## Organizing
 
-After reading the `.dat` file, we receive a full representation of its content in an array of `ValueMember` instances. While the dump we receive from the *Reader* already contains all the attributes and values we need later on, this output is too unstructured to handle efficiently yet. If possible, we would like to operate on logical entities we know from the game like units, buildings, civs or terrains, instead of cherry picking from a giant array of attributes.
+After reading the `.dat` file, we receive a full representation of its' content in an array of `ValueMember` instances. While the data we receive from the *Reader* already contains all the attributes and values we need later on, this output is too unstructured to be handled efficiently yet. If possible, we would like to operate on logical entities we know from the game like units, buildings, civs or terrains instead of cherry picking from a giant array of attributes.
 
-![Dump to GenieObjects]({static}/images/C0000-genie-objects.svg)
+![Data dump of GenieObjects]({static}/images/C0000-genie-objects.svg)
 
-To do this, we transform the dumped values into converter objects that resemble the structure used in the original engine (hence *AoE-like* objects). These objects (`GenieObject`s) are very similar to what you would see in Advanced Genie Editor, just without the fancy GUI. For example, we put every `ValueMember` attribute belonging to an AoE2 unit into a `GenieUnit` object. The same process is repeated for every unit and every other logical structure that we can recognize in the game. Afterwards, each attribute will be assigned to an appropriate `GenieObject` subclass. Every subclass instances receives its own list in a container which can be accessed in the *Processor* stage.
+To do this, we transform the dumped values into converter objects that resemble the structure used in the original engine (hence *AoE-like* objects). These objects (`GenieObject`s) are very similar to what you would see in Advanced Genie Editor, just without the fancy GUI. For example, we put every `ValueMember` attribute belonging to an AoE2 unit into a `GenieUnit` object. The same process is repeated for every unit and every other logical structure that we can recognize in the game. Afterwards, each attribute will be assigned to an appropriate `GenieObject` subclass. Every subclass instance receives its' own list in a container which can be accessed in the *Processor* stage.
 
-Not only is this object-oriented approach much easier to work with, we also no longer have to worry about where exactly logical entities, e.g. units, are located in the dump. Thus we can focus purely on its content and leave the legacy of the `.dat` file structure behind.
+Not only is this object-oriented approach much easier to work with, we also no longer have to worry about where exactly logical entities (e.g. units) are located in the dump. Thus we can focus purely on its content and leave the legacy of the `.dat` file structure behind.
 
 ## To be continued...
 
